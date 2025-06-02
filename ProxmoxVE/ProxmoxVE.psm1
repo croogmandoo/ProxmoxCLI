@@ -63,6 +63,7 @@ function Connect-PVEReal {
                 CSRFToken = $response.data.CSRFPreventionToken
                 User = $response.data.username # This is usually user@realm from PVE
                 ConnectTime = Get-Date
+                SkipCertCheck = $PSBoundParameters['SkipCertificateCheck'].IsPresent
             }
             Write-Host "Successfully connected to Proxmox VE: $Server as $($Global:PVERealSession.User)"
             return $Global:PVERealSession
@@ -115,9 +116,22 @@ function Get-PVEVM {
         "Cookie" = "PVEAuthCookie=$($Global:PVERealSession.Ticket)"
     }
 
+    $irmParameters = @{
+        Uri = $apiUrl
+        Method = 'Get'
+        Headers = $headers
+        ErrorAction = 'Stop'
+    }
+
+    # Honor SkipCertificateCheck from the session
+    if ($Global:PVERealSession.SkipCertCheck -eq $true) {
+        Write-Verbose "Honoring SkipCertificateCheck for this Get-PVEVM call."
+        $irmParameters.SkipCertificateCheck = $true
+    }
+
     try {
         Write-Verbose "Executing Invoke-RestMethod GET to $apiUrl"
-        $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -ErrorAction Stop
+        $response = Invoke-RestMethod @irmParameters # Using splatting
         
         # Proxmox API often returns data directly if successful and data exists
         # For /cluster/resources, it's directly an array in 'data'
@@ -171,9 +185,22 @@ function Get-PVELXC {
         "Cookie" = "PVEAuthCookie=$($Global:PVERealSession.Ticket)"
     }
 
+    $irmParameters = @{
+        Uri = $apiUrl
+        Method = 'Get'
+        Headers = $headers
+        ErrorAction = 'Stop'
+    }
+
+    # Honor SkipCertificateCheck from the session
+    if ($Global:PVERealSession.SkipCertCheck -eq $true) {
+        Write-Verbose "Honoring SkipCertificateCheck for this Get-PVELXC call."
+        $irmParameters.SkipCertificateCheck = $true
+    }
+
     try {
         Write-Verbose "Executing Invoke-RestMethod GET to $apiUrl"
-        $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -ErrorAction Stop
+        $response = Invoke-RestMethod @irmParameters # Using splatting
         
         if ($response.data) {
             # Ensure we always output a collection
