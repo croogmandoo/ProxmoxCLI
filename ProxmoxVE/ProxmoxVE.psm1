@@ -29,7 +29,7 @@ function Connect-PVEReal {
     Write-Verbose "Constructed API URL: $apiUrl" # Added for debugging
 
     $plainPassword = ConvertFrom-SecureString -SecureString $Password -AsPlainText
-
+    
     $body = @{
         username = $User # Assuming $User is 'root' not 'root@pam'
         password = $plainPassword
@@ -55,7 +55,7 @@ function Connect-PVEReal {
     try {
         Write-Verbose "Executing Invoke-RestMethod to $apiUrl" # This will now use the debugged $apiUrl
         $response = Invoke-RestMethod @irmParameters
-
+        
         if ($response.data -and $response.data.ticket -and $response.data.CSRFPreventionToken) {
             $Global:PVERealSession = @{
                 Server = $Server
@@ -115,39 +115,31 @@ function Get-PVEVM {
         "Cookie" = "PVEAuthCookie=$($Global:PVERealSession.Ticket)"
     }
 
-    # HYPOTHETICAL LIVE TESTING BLOCK (actual call commented out for now)
-    # if ($AllowLiveApiTesting) { # Define $AllowLiveApiTesting globally or pass as param for real tests
-    #     try {
-    #         Write-Verbose "Executing Invoke-RestMethod GET to $apiUrl"
-    #         $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -ErrorAction Stop
-    #         if ($response.data) {
-    #             return $response.data | ForEach-Object { [PSCustomObject]$_ }
-    #         } else {
-    #             Write-Warning "No VMs found or unexpected API response from live server."
-    #             return @()
-    #         }
-    #     } catch {
-    #         Write-Error "Error getting VMs from live server: $($_.Exception.Message)"
-    #         if ($_.Exception.Response) { Write-Error "Server Response: $($_.Exception.Response | Out-String)"}
-    #         return @()
-    #     }
-    # } else {
-        # Fallback to SIMULATED response
-        Write-Warning "SIMULATED API CALL: Get-PVEVM. Live API call is currently disabled/commented out."
-        $simulatedResponse = @{
-            data = @(
-                @{ vmid = 100; name = 'vm-example-100'; status = 'running'; node = ($Node -or 'pve1'); template = 0 },
-                @{ vmid = 101; name = 'vm-template-101'; status = 'stopped'; node = ($Node -or 'pve1'); template = 1 },
-                @{ vmid = 200; name = 'another-vm-200'; status = 'stopped'; node = ($Node -or 'pve2'); template = 0 }
-            )
-        }
-        # If a specific node was requested for simulation, filter by it (basic simulation)
-        if ($PSBoundParameters.ContainsKey('Node') -and -not ([string]::IsNullOrWhiteSpace($Node))) {
-             return $simulatedResponse.data | Where-Object { $_.node -eq $Node } | ForEach-Object { [PSCustomObject]$_ }
+    try {
+        Write-Verbose "Executing Invoke-RestMethod GET to $apiUrl"
+        $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -ErrorAction Stop
+        
+        # Proxmox API often returns data directly if successful and data exists
+        # For /cluster/resources, it's directly an array in 'data'
+        # For /nodes/{node}/qemu, it's also directly an array in 'data'
+        if ($response.data) {
+            # Ensure we always output a collection, even if single item from API
+            if ($response.data -is [System.Management.Automation.PSCustomObject]) {
+                 return @([PSCustomObject]$response.data)
+            } else {
+                 return $response.data | ForEach-Object { [PSCustomObject]$_ }
+            }
         } else {
-             return $simulatedResponse.data | ForEach-Object { [PSCustomObject]$_ }
+            Write-Warning "No VMs found or unexpected API response from server (response.data is null or empty)."
+            return @() # Return an empty array if no data
         }
-    # }
+    } catch {
+        Write-Error "Error getting VMs from Proxmox VE: $($_.Exception.Message)"
+        if ($_.Exception.Response) {
+            Write-Error "Server Response: $($_.Exception.Response | Out-String)"
+        }
+        return @() # Return an empty array on error
+    }
 }
 
 # Function to get Proxmox VE LXC Containers
@@ -170,44 +162,35 @@ function Get-PVELXC {
         $apiUrl = "https://$($Global:PVERealSession.Server):8006/api2/json/nodes/$Node/lxc"
     } else {
         Write-Verbose "Getting LXCs from all resources (cluster view)"
-        $apiUrl = "https://$($Global:PVERealSession.Server):8006/api2/json/cluster/resources?type=ct"
+        # 'ct' is the type for LXC containers in /cluster/resources
+        $apiUrl = "https://$($Global:PVERealSession.Server):8006/api2/json/cluster/resources?type=ct" 
     }
-
+    
     $headers = @{
         "CSRFPreventionToken" = $Global:PVERealSession.CSRFToken
         "Cookie" = "PVEAuthCookie=$($Global:PVERealSession.Ticket)"
     }
 
-    # HYPOTHETICAL LIVE TESTING BLOCK (actual call commented out for now)
-    # if ($AllowLiveApiTesting) {
-    #     try {
-    #         Write-Verbose "Executing Invoke-RestMethod GET to $apiUrl"
-    #         $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -ErrorAction Stop
-    #         if ($response.data) {
-    #             return $response.data | ForEach-Object { [PSCustomObject]$_ }
-    #         } else {
-    #             Write-Warning "No LXC containers found or unexpected API response from live server."
-    #             return @()
-    #         }
-    #     } catch {
-    #         Write-Error "Error getting LXC containers from live server: $($_.Exception.Message)"
-    #         if ($_.Exception.Response) { Write-Error "Server Response: $($_.Exception.Response | Out-String)"}
-    #         return @()
-    #     }
-    # } else {
-        # Fallback to SIMULATED response
-        Write-Warning "SIMULATED API CALL: Get-PVELXC. Live API call is currently disabled/commented out."
-        $simulatedResponse = @{
-            data = @(
-                @{ vmid = 102; name = 'ct-example-102'; status = 'running'; node = ($Node -or 'pve1'); template = 0 },
-                @{ vmid = 201; name = 'another-ct-201'; status = 'stopped'; node = ($Node -or 'pve2'); template = 0 }
-            )
-        }
-        # If a specific node was requested for simulation, filter by it
-        if ($PSBoundParameters.ContainsKey('Node') -and -not ([string]::IsNullOrWhiteSpace($Node))) {
-            return $simulatedResponse.data | Where-Object { $_.node -eq $Node } | ForEach-Object { [PSCustomObject]$_ }
+    try {
+        Write-Verbose "Executing Invoke-RestMethod GET to $apiUrl"
+        $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -ErrorAction Stop
+        
+        if ($response.data) {
+            # Ensure we always output a collection
+            if ($response.data -is [System.Management.Automation.PSCustomObject]) {
+                 return @([PSCustomObject]$response.data)
+            } else {
+                 return $response.data | ForEach-Object { [PSCustomObject]$_ }
+            }
         } else {
-            return $simulatedResponse.data | ForEach-Object { [PSCustomObject]$_ }
+            Write-Warning "No LXC containers found or unexpected API response from server (response.data is null or empty)."
+            return @() # Return an empty array if no data
         }
-    # }
+    } catch {
+        Write-Error "Error getting LXC containers from Proxmox VE: $($_.Exception.Message)"
+        if ($_.Exception.Response) {
+            Write-Error "Server Response: $($_.Exception.Response | Out-String)"
+        }
+        return @() # Return an empty array on error
+    }
 }
